@@ -7,6 +7,7 @@ import { z } from 'zod';
  *   - unit tests can import modules that reference configuration without booting secrets;
  *   - `next build` does not fail on a machine that has not created `.env.local` yet.
  *
+ * Supports both Google Gemini (primary) and OpenAI (secondary) providers.
  * The first access of a missing variable throws a single, explicit error listing
  * every missing variable instead of a generic "undefined is not a string".
  */
@@ -15,7 +16,11 @@ const serverEnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url('NEXT_PUBLIC_SUPABASE_URL must be a valid URL'),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(10, 'NEXT_PUBLIC_SUPABASE_ANON_KEY is too short'),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(10, 'SUPABASE_SERVICE_ROLE_KEY is too short'),
-  OPENAI_API_KEY: z.string().min(10, 'OPENAI_API_KEY is too short'),
+  AI_PROVIDER: z.enum(['gemini', 'openai', 'auto']).default('auto'),
+  GEMINI_API_KEY: z.string().min(5, 'GEMINI_API_KEY is too short').optional().or(z.literal('').transform(() => undefined)),
+  GEMINI_CHAT_MODEL: z.string().min(1).default('gemini-1.5-flash'),
+  GEMINI_EMBEDDING_MODEL: z.string().min(1).default('text-embedding-004'),
+  OPENAI_API_KEY: z.string().min(10, 'OPENAI_API_KEY is too short').optional().or(z.literal('').transform(() => undefined)),
   OPENAI_CHAT_MODEL: z.string().min(1).default('gpt-4o-mini'),
   OPENAI_EMBEDDING_MODEL: z.string().min(1).default('text-embedding-3-small'),
   NEXT_PUBLIC_SITE_URL: z.string().url().default('http://localhost:3000'),
@@ -27,19 +32,23 @@ const serverEnvSchema = z.object({
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
 
-/** Variables that must be present for the app to do anything useful. */
-const REQUIRED_KEYS = [
+/** Base variables that must be present for Supabase authentication and database. */
+const BASE_REQUIRED_KEYS = [
   'NEXT_PUBLIC_SUPABASE_URL',
   'NEXT_PUBLIC_SUPABASE_ANON_KEY',
   'SUPABASE_SERVICE_ROLE_KEY',
-  'OPENAI_API_KEY',
 ] as const;
 
 function readRaw(): Record<string, string | undefined> {
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   return {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    AI_PROVIDER: process.env.AI_PROVIDER,
+    GEMINI_API_KEY: geminiKey,
+    GEMINI_CHAT_MODEL: process.env.GEMINI_CHAT_MODEL,
+    GEMINI_EMBEDDING_MODEL: process.env.GEMINI_EMBEDDING_MODEL,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     OPENAI_CHAT_MODEL: process.env.OPENAI_CHAT_MODEL,
     OPENAI_EMBEDDING_MODEL: process.env.OPENAI_EMBEDDING_MODEL,
@@ -87,7 +96,12 @@ export function getServerEnv(): ServerEnv {
     throw cachedError;
   }
 
-  const missing = REQUIRED_KEYS.filter((key) => !raw[key] || raw[key] === '');
+  const missing = BASE_REQUIRED_KEYS.filter((key) => !raw[key] || raw[key] === '');
+  const hasAiKey = Boolean(raw.GEMINI_API_KEY || raw.OPENAI_API_KEY);
+  if (!hasAiKey) {
+    missing.push('GEMINI_API_KEY or OPENAI_API_KEY' as any);
+  }
+
   if (missing.length > 0) {
     cachedError = new EnvValidationError([...missing]);
     throw cachedError;
@@ -126,7 +140,7 @@ export function getStorageBucket(): string {
 }
 
 /**
- * Convenience accessor: `env.OPENAI_CHAT_MODEL`.
+ * Convenience accessor: `env.GEMINI_CHAT_MODEL`, `env.OPENAI_CHAT_MODEL`, etc.
  * Validation happens on first property read, not at import time.
  */
 export const env: ServerEnv = new Proxy({} as ServerEnv, {

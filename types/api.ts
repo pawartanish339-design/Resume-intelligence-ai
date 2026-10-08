@@ -1,5 +1,5 @@
 import type { WeightProfileId } from '@/lib/data/weight-profiles';
-import type { AnalysisComparison, AnalysisResult } from '@/types/analysis';
+import type { AnalysisComparison, AnalysisResult, ResumeSuggestion } from '@/types/analysis';
 import type { ResumeListItem } from '@/types/resume';
 
 /** Standard error envelope for every API route. */
@@ -174,4 +174,11 @@ export interface AccountExportResponse {
 export interface DeleteAccountResponse {
   success: true;
   deleted: { resumes: number; analyses: number; storage_objects: number };
+}
+
+export interface SuggestionsResponse {
+  analysis_id: string;
+  suggestions: ResumeSuggestion[];
+  total: number;
+  high_priority_count: number;
 }

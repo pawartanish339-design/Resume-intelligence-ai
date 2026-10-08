@@ -130,6 +130,37 @@ export interface ScoreBreakdown {
 
 export type RecommendationPriority = 'high' | 'medium' | 'low';
 
+export type SuggestionType =
+  | 'skill_gap'
+  | 'quantification'
+  | 'action_verb'
+  | 'formatting'
+  | 'ats_optimization'
+  | 'experience_framing'
+  | 'keyword_alignment';
+
+export type SuggestionPriority = 'high' | 'medium' | 'low';
+
+export interface ResumeSuggestion {
+  /** Stable unique identifier for the suggestion */
+  id: string;
+  type: SuggestionType;
+  title: string;
+  description: string;
+  priority: SuggestionPriority;
+  /** Estimated impact or score benefit */
+  impact: string;
+  category: string;
+  /** Target section, skill, or bullet point */
+  target?: string;
+  /** Example of current or weak phrasing */
+  before_example?: string;
+  /** Concrete suggested improvement or replacement */
+  after_example?: string;
+  /** Ordered list of specific action steps */
+  action_items: string[];
+}
+
 export interface Recommendation {
   /** Stable id so the UI can key on it and tests can assert determinism. */
   id: string;
@@ -229,6 +260,7 @@ export interface AnalysisResult {
   experience: ExperienceReport;
   gaps: SkillGapItem[];
   recommendations: Recommendation[];
+  suggestions: ResumeSuggestion[];
   safety: PromptInjectionNotice;
   timings: PipelineTimings;
   llm_usage: {
@@ -263,6 +295,7 @@ export interface PersistedScoreBreakdown {
   };
   safety: PromptInjectionNotice;
   timings: PipelineTimings;
+  suggestions?: ResumeSuggestion[];
 }
 
 export interface ComparisonDelta {

@@ -1,3 +1,4 @@
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { embedMany, generateObject, type LanguageModelV1 } from 'ai';
 import type { z } from 'zod';
@@ -10,42 +11,84 @@ import { AppError, errorMessage, logSafe } from '@/lib/utils/errors';
 import { type LlmCallStats } from '@/types/analysis';
 
 /**
- * Provider access layer. Everything that talks to OpenAI goes through here so
- * that retries, the circuit breaker, timeouts, and accounting are applied
- * uniformly and can be exercised by tests through dependency injection.
+ * Provider access layer. Everything that talks to Google Gemini or OpenAI goes
+ * through here so that retries, the circuit breaker, timeouts, and accounting
+ * are applied uniformly and can be exercised by tests through dependency injection.
  *
- * This module is server-only by construction: it reads OPENAI_API_KEY from the
- * server environment.
+ * This module is server-only by construction: it reads GEMINI_API_KEY / OPENAI_API_KEY
+ * from the server environment.
  */
 
-let provider: ReturnType<typeof createOpenAI> | null = null;
+let googleProvider: ReturnType<typeof createGoogleGenerativeAI> | null = null;
+let openAiProvider: ReturnType<typeof createOpenAI> | null = null;
+
+export function getActiveAiProvider(): 'gemini' | 'openai' {
+  try {
+    const serverEnv = getServerEnv();
+    if (serverEnv.AI_PROVIDER === 'gemini') return 'gemini';
+    if (serverEnv.AI_PROVIDER === 'openai') return 'openai';
+    if (serverEnv.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+      return 'gemini';
+    }
+    return 'openai';
+  } catch {
+    if (process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+      return 'gemini';
+    }
+    return 'openai';
+  }
+}
+
+export function getGoogleProvider() {
+  if (googleProvider) return googleProvider;
+  const env = getServerEnv();
+  const apiKey = env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || '';
+  googleProvider = createGoogleGenerativeAI({ apiKey });
+  return googleProvider;
+}
 
 export function getOpenAIProvider() {
-  if (provider) return provider;
+  if (openAiProvider) return openAiProvider;
   const env = getServerEnv();
-  provider = createOpenAI({ apiKey: env.OPENAI_API_KEY, compatibility: 'strict' });
-  return provider;
+  openAiProvider = createOpenAI({ apiKey: env.OPENAI_API_KEY || '', compatibility: 'strict' });
+  return openAiProvider;
 }
 
 export function getChatModel(modelId?: string): LanguageModelV1 {
+  const active = getActiveAiProvider();
+  if (active === 'gemini') {
+    const env = getServerEnv();
+    return getGoogleProvider()(modelId ?? env.GEMINI_CHAT_MODEL ?? 'gemini-1.5-flash');
+  }
   const env = getServerEnv();
-  return getOpenAIProvider()(modelId ?? env.OPENAI_CHAT_MODEL);
+  return getOpenAIProvider()(modelId ?? env.OPENAI_CHAT_MODEL ?? 'gpt-4o-mini');
 }
 
 export function getEmbeddingModel(modelId?: string) {
+  const active = getActiveAiProvider();
+  if (active === 'gemini') {
+    const env = getServerEnv();
+    return getGoogleProvider().textEmbeddingModel(modelId ?? env.GEMINI_EMBEDDING_MODEL ?? 'text-embedding-004');
+  }
   const env = getServerEnv();
-  return getOpenAIProvider().embedding(modelId ?? env.OPENAI_EMBEDDING_MODEL);
+  return getOpenAIProvider().embedding(modelId ?? env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small');
 }
 
 export const EMBEDDING_DIMENSIONS = 1536;
 
+export function getEmbeddingDimensions(): number {
+  return getActiveAiProvider() === 'gemini' ? 768 : 1536;
+}
+
 /** Process-wide breakers: one shared failure budget per upstream capability. */
 export function llmBreaker() {
-  return getCircuitBreaker('openai-chat', { failureThreshold: 5, openMs: 30_000 });
+  const provider = getActiveAiProvider();
+  return getCircuitBreaker(`${provider}-chat`, { failureThreshold: 5, openMs: 30_000 });
 }
 
 export function embeddingBreaker() {
-  return getCircuitBreaker('openai-embeddings', { failureThreshold: 5, openMs: 30_000 });
+  const provider = getActiveAiProvider();
+  return getCircuitBreaker(`${provider}-embeddings`, { failureThreshold: 5, openMs: 30_000 });
 }
 
 export interface GenerateObjectOptions<T extends z.ZodTypeAny> {
@@ -137,7 +180,8 @@ export async function generateStructuredObject<T extends z.ZodTypeAny>({
 
 function safeChatModelName(): string {
   try {
-    return getServerEnv().OPENAI_CHAT_MODEL;
+    const env = getServerEnv();
+    return getActiveAiProvider() === 'gemini' ? env.GEMINI_CHAT_MODEL : env.OPENAI_CHAT_MODEL;
   } catch {
     return 'unknown';
   }
@@ -223,9 +267,10 @@ export async function embedTextBatch(
 
 function safeEmbeddingModelName(): string {
   try {
-    return getServerEnv().OPENAI_EMBEDDING_MODEL;
+    const env = getServerEnv();
+    return getActiveAiProvider() === 'gemini' ? env.GEMINI_EMBEDDING_MODEL : env.OPENAI_EMBEDDING_MODEL;
   } catch {
-    return 'text-embedding-3-small';
+    return 'embedding-model';
   }
 }
 
@@ -245,6 +290,38 @@ export interface ProviderProbe {
  */
 export const probeChatProvider = memoizeAsync(
   async (): Promise<ProviderProbe> => {
+    const active = getActiveAiProvider();
+
+    if (active === 'gemini') {
+      const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      if (!apiKey) {
+        return { status: 'skipped', latency_ms: 0, detail: 'GEMINI_API_KEY is not configured' };
+      }
+
+      const startedAt = Date.now();
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+          {
+            signal: AbortSignal.timeout(5_000),
+            cache: 'no-store',
+          },
+        );
+
+        return {
+          status: response.ok ? 'up' : 'down',
+          latency_ms: Date.now() - startedAt,
+          detail: response.ok ? 'Google Gemini models endpoint reachable' : `HTTP ${response.status}`,
+        };
+      } catch (error) {
+        return {
+          status: 'down',
+          latency_ms: Date.now() - startedAt,
+          detail: errorMessage(error),
+        };
+      }
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       return { status: 'skipped', latency_ms: 0, detail: 'OPENAI_API_KEY is not configured' };
     }
@@ -260,7 +337,7 @@ export const probeChatProvider = memoizeAsync(
       return {
         status: response.ok ? 'up' : 'down',
         latency_ms: Date.now() - startedAt,
-        detail: response.ok ? 'models endpoint reachable' : `HTTP ${response.status}`,
+        detail: response.ok ? 'OpenAI models endpoint reachable' : `HTTP ${response.status}`,
       };
     } catch (error) {
       return {
@@ -276,11 +353,38 @@ export const probeChatProvider = memoizeAsync(
 
 /**
  * Embedding probe: a single, deterministic 1-token embedding. Cached for 60s.
- * Fallback to the models endpoint keeps the probe useful when embeddings are
- * temporarily rate limited.
  */
 export const probeEmbeddingProvider = memoizeAsync(
   async (): Promise<ProviderProbe> => {
+    const active = getActiveAiProvider();
+
+    if (active === 'gemini') {
+      const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      if (!apiKey) {
+        return { status: 'skipped', latency_ms: 0, detail: 'GEMINI_API_KEY is not configured' };
+      }
+
+      const startedAt = Date.now();
+      try {
+        const { embed } = await import('ai');
+        const env = getServerEnv();
+
+        const result = await embed({
+          model: getEmbeddingModel(env.GEMINI_EMBEDDING_MODEL),
+          value: 'health',
+        });
+
+        const dimensions = Array.isArray(result.embedding) ? result.embedding.length : 0;
+        return {
+          status: dimensions > 0 ? 'up' : 'down',
+          latency_ms: Date.now() - startedAt,
+          detail: `Gemini ${env.GEMINI_EMBEDDING_MODEL} (${dimensions} dims)`,
+        };
+      } catch (error) {
+        return { status: 'down', latency_ms: Date.now() - startedAt, detail: errorMessage(error) };
+      }
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       return { status: 'skipped', latency_ms: 0, detail: 'OPENAI_API_KEY is not configured' };
     }
@@ -299,7 +403,7 @@ export const probeEmbeddingProvider = memoizeAsync(
       return {
         status: dimensions > 0 ? 'up' : 'down',
         latency_ms: Date.now() - startedAt,
-        detail: `${env.OPENAI_EMBEDDING_MODEL} (${dimensions} dims)`,
+        detail: `OpenAI ${env.OPENAI_EMBEDDING_MODEL} (${dimensions} dims)`,
       };
     } catch (error) {
       return { status: 'down', latency_ms: Date.now() - startedAt, detail: errorMessage(error) };

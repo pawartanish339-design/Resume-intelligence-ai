@@ -134,6 +134,7 @@ describe('runAnalysisPipeline', () => {
 
     expect(output.result.timings.total_ms).toBeGreaterThanOrEqual(0);
     expect(output.result.disclaimers.primary).toContain('algorithmic');
+    expect(Array.isArray(output.result.suggestions)).toBe(true);
 
     expect(output.jobDescriptionId).toBeTruthy();
   });

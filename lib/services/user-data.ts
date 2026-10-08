@@ -3,7 +3,13 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import type { AnalysisRow, JobDescriptionRow, ResumeRow, ResumeVersionRow } from '@/lib/db/types';
-import type { AnalysisResult, MatchCategory, Recommendation, ScoreComponentDetail } from '@/types/analysis';
+import type {
+  AnalysisResult,
+  MatchCategory,
+  Recommendation,
+  ResumeSuggestion,
+  ScoreComponentDetail,
+} from '@/types/analysis';
 import type { ResumeListItem, ResumeVersionListItem } from '@/types/resume';
 
 /**
@@ -467,4 +473,11 @@ export function componentRowsFromBreakdown(
 /** Recommendations are stored as JSON; this narrows them for the UI. */
 export function recommendationsFromBreakdown(value: unknown): Recommendation[] {
   return Array.isArray(value) ? (value as Recommendation[]) : [];
+}
+
+/** Suggestions are stored in the score_breakdown; this narrows them for the UI. */
+export function suggestionsFromBreakdown(value: unknown): ResumeSuggestion[] {
+  if (!value || typeof value !== 'object') return [];
+  const parsed = value as { suggestions?: ResumeSuggestion[] };
+  return Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
 }

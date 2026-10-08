@@ -54,3 +54,15 @@ export function maskIp(ip: string | null | undefined): string {
   if (parts.length !== 4) return '•••';
   return `${parts.slice(0, 3).join('.')}.••`;
 }
+
+/** Mask a person name for privacy: `John Doe` -> `J*** D***`. */
+export function maskName(name: string | null | undefined): string {
+  if (!name) return '—';
+  const trimmed = name.trim();
+  if (!trimmed) return '—';
+  const parts = trimmed.split(/\s+/);
+  return parts
+    .map((part) => (part.length > 0 ? `${part[0]}***` : ''))
+    .filter(Boolean)
+    .join(' ');
+}

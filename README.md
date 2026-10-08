@@ -26,7 +26,7 @@ touches a score, a weight, a threshold, or a match category.
 | Node.js ≥ 18.18 (20+ recommended) | `node --version` |
 | npm 9+ | ships with Node |
 | A Supabase project | free tier is fine — [supabase.com](https://supabase.com) |
-| An OpenAI API key | `gpt-4o-mini` + `text-embedding-3-small`; a few cents per analysis |
+| A Gemini or OpenAI API key | Google Gemini (`gemini-1.5-flash` + `text-embedding-004`) or OpenAI (`gpt-4o-mini` + `text-embedding-3-small`) |
 | (Optional) Upstash Redis | only needed for multi-instance rate limiting |
 
 ### 1. Install
@@ -330,11 +330,11 @@ This project makes the following assumptions explicit, because they shape the re
 9. **OCR is a fallback of last resort.** It is capped at five pages for latency and cost,
    so a 20-page scanned portfolio will only be partially read.
 10. **Nothing is emailed or shared.** There is no notification system and no recruiter
-    access; the only outbound calls are to OpenAI (extraction/embeddings) and Supabase.
+    access; the only outbound calls are to the AI provider (Google Gemini / OpenAI for extraction/embeddings) and Supabase.
 11. **Administrators are trusted operators.** Admin actions are logged, not approved, and
     an admin can read resumes in the console by design.
 12. **Free-tier limits are the operator's problem.** The app enforces its own rate limits
-    but does not manage OpenAI quotas or Supabase plan limits.
+    but does not manage AI provider quotas or Supabase plan limits.
 
 ---
 

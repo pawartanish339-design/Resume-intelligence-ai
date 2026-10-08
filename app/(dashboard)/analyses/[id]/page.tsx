@@ -20,6 +20,9 @@ import { ScoreBreakdown } from '@/components/dashboard/score-breakdown';
 import { SkillGrid, type SkillRowView } from '@/components/dashboard/skill-grid';
 import { RecommendationList } from '@/components/dashboard/recommendation-card';
 import { AtsChecks, HardRequirementsList } from '@/components/dashboard/ats-checks';
+import { SuggestionPanel } from '@/components/dashboard/suggestion-panel';
+import { generateResumeSuggestions, suggestionsFromBreakdown } from '@/lib/services/suggestions';
+import type { ResumeSuggestion } from '@/types/analysis';
 
 export const metadata: Metadata = {
   title: 'Analysis report',
@@ -42,6 +45,7 @@ interface PersistedBreakdown {
   };
   safety?: { flagged: boolean; matches: string[]; documents: Array<'resume' | 'job_description'> };
   timings?: Record<string, number>;
+  suggestions?: ResumeSuggestion[];
 }
 
 export default async function AnalysisReportPage({ params }: { params: { id: string } }) {
@@ -86,6 +90,56 @@ export default async function AnalysisReportPage({ params }: { params: { id: str
   const warnings = breakdown.extraction?.warnings ?? [];
   const safety = detail.safety;
   const timings = Object.entries(breakdown.timings ?? {}).filter(([, value]) => typeof value === 'number');
+
+  const persistedSuggestions = suggestionsFromBreakdown(breakdown);
+  const suggestions =
+    persistedSuggestions.length > 0
+      ? persistedSuggestions
+      : generateResumeSuggestions({
+          resume: canonicalResume,
+          jobDescription: detail.jobDescription
+            ? {
+                meta: {
+                  job_title: detail.jobDescription.title,
+                  company_name: detail.jobDescription.company_name,
+                  industry: null,
+                  seniority_level: null,
+                },
+                requirements: {
+                  required_skills: [],
+                  preferred_skills: [],
+                  hard_requirements: [],
+                  soft_skills: [],
+                  education_level: [],
+                  min_years_experience: null,
+                },
+                responsibilities: [],
+                tools_and_technologies: [],
+                domain_keywords: [],
+              }
+            : null,
+          quality: quality
+            ? {
+                score: quality.score,
+                action_verb_density: quality.action_verb_density,
+                quantified_bullet_ratio: quality.quantified_bullet_ratio,
+                achievements_index: 0,
+                structure_score: 0,
+                readability_score: 0,
+                bullet_length_fit: 0,
+                bullet_count: 0,
+                passive_openers: [],
+                findings: quality.findings ?? [],
+                flesch_reading_ease: 0,
+                flesch_kincaid_grade: 0,
+                date_format_uniform: true,
+                reverse_chronological: true,
+                date_findings: [],
+              }
+            : null,
+          ats: { score: detail.analysis.ats_score, checks: atsChecks, findings: quality?.findings ?? [] },
+          hardRequirements,
+        });
 
   return (
     <div className="space-y-6">
@@ -167,6 +221,7 @@ export default async function AnalysisReportPage({ params }: { params: { id: str
           <TabsTrigger value="skills">Skills ({skillRows.length})</TabsTrigger>
           <TabsTrigger value="ats">ATS checks</TabsTrigger>
           <TabsTrigger value="gaps">Gaps &amp; recommendations ({recommendations.length})</TabsTrigger>
+          <TabsTrigger value="suggestions">Suggestions ({suggestions.length})</TabsTrigger>
           <TabsTrigger value="method">Methodology</TabsTrigger>
         </TabsList>
 
@@ -268,6 +323,10 @@ export default async function AnalysisReportPage({ params }: { params: { id: str
 
         <TabsContent value="gaps">
           <RecommendationList recommendations={recommendations} />
+        </TabsContent>
+
+        <TabsContent value="suggestions">
+          <SuggestionPanel suggestions={suggestions} />
         </TabsContent>
 
         <TabsContent value="method">

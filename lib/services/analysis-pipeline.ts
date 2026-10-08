@@ -10,6 +10,7 @@ import { suggestWeightProfile, type WeightProfileId } from '@/lib/data/weight-pr
 import { analyzeAts } from '@/lib/services/ats';
 import { analyzeQuality } from '@/lib/services/quality';
 import { analyzeExperience } from '@/lib/services/experience';
+import { generateResumeSuggestions } from '@/lib/services/suggestions';
 import { classifySkillMatches, type MatcherOutput } from '@/lib/services/matcher';
 import { buildSkillGaps } from '@/lib/services/gaps';
 import { computeScores, coverageScore } from '@/lib/services/scoring';
@@ -331,6 +332,17 @@ export async function runAnalysisPipeline(input: RunAnalysisInput): Promise<RunA
   });
   const recommend_ms = recommendTimer();
 
+  const suggestions = generateResumeSuggestions({
+    resume: input.resumeVersion.extracted_data,
+    jobDescription,
+    matches: [...matcher.required, ...matcher.preferred, ...matcher.other],
+    gaps,
+    quality,
+    ats,
+    experience,
+    hardRequirements: matcher.hardRequirements,
+  });
+
   // ---- Stage 6: bookkeeping ------------------------------------------------
   const safety: PromptInjectionNotice = mergeSafetyNotices([jdExtraction.safety.notice]);
 
@@ -400,6 +412,7 @@ export async function runAnalysisPipeline(input: RunAnalysisInput): Promise<RunA
     },
     safety,
     timings,
+    suggestions,
   };
 
   let jobDescriptionId: string | null = null;
@@ -530,6 +543,7 @@ export async function runAnalysisPipeline(input: RunAnalysisInput): Promise<RunA
     experience,
     gaps,
     recommendations,
+    suggestions,
     safety,
     timings,
     llm_usage: llmUsage,
